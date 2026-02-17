@@ -1,0 +1,35 @@
+{
+  "name": "whatsapp-financas-bot-interativo",
+  "version": "2.0.0",
+  "description": "Bot interativo do WhatsApp para controle de finanças com comandos",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "db:setup": "ts-node src/database/setup.ts"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "financas",
+    "typescript",
+    "supabase"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "date-fns": "^3.0.0",
+    "dotenv": "^16.3.1",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
