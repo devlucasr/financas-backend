@@ -32,4 +32,4 @@ RUN npm run build
 # O Railway usa a porta 8080 por padrão se você subir um servidor HTTP, 
 # mas como é um bot de WhatsApp, não é obrigatório expor porta.
 
-CMD ["node", "dist/index.js"]
+CMD ["npm", "start"]

@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/index.ts",
-    "start": "node dist/index.js",
+    "start": "mkdir -p ./.wwebjs_auth && find ./.wwebjs_auth -name 'SingletonLock' -delete && node dist/index.js",
     "clean": "rm -rf dist",
     "db:setup": "ts-node src/database/setup.ts"
   },
