@@ -13,7 +13,8 @@ export class WhatsAppBot {
   constructor() {
     this.client = new Client({
       authStrategy: new LocalAuth({
-        dataPath: '/app/.wwebjs_auth'
+        dataPath: '/app/.wwebjs_auth',
+        clientId: 'bot-financas'
       }),
       puppeteer: {
         headless: true,
@@ -24,8 +25,10 @@ export class WhatsAppBot {
           "--disable-dev-shm-usage",
           "--disable-gpu"
         ],
+        userDataDir: '/app/.chrome'
       },
     });
+    
     
 
     this.commandHandler = new CommandHandler();
