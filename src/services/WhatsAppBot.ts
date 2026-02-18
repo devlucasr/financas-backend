@@ -19,7 +19,14 @@ export class WhatsAppBot {
         executablePath:
           process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--no-first-run",
+          "--no-zygote",
+          "--single-process",
+        ],        
       },
     });
     
