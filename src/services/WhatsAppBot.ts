@@ -12,7 +12,9 @@ export class WhatsAppBot {
 
   constructor() {
     this.client = new Client({
-      authStrategy: new LocalAuth(),
+      authStrategy: new LocalAuth({
+        dataPath: '/app/.wwebjs_auth'
+      }),      
       puppeteer: {
         headless: true,
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
