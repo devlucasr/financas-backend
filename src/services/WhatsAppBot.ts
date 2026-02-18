@@ -13,24 +13,16 @@ export class WhatsAppBot {
   constructor() {
     this.client = new Client({
       authStrategy: new LocalAuth({
-        dataPath: '/app/.wwebjs_auth',
-        clientId: 'bot-financas'
+        dataPath: "/app/.wwebjs_auth",
       }),
       puppeteer: {
+        executablePath:
+          process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu"
-        ],
-        userDataDir: '/app/.chrome'
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
       },
     });
     
-    
-
     this.commandHandler = new CommandHandler();
     this.db = new DatabaseService();
     this.setupEventHandlers();
