@@ -84,34 +84,46 @@ export class WhatsAppBot {
 
   private async handleMessage(message: Message) {
     try {
+      // 1. Verificação básica de existência
+      if (!message || !message.body) return;
+
       const chat = await message.getChat();
       const body = message.body.trim();
-  
-      // Identifica grupo na primeira mensagem
+      const userId = message.author || message.from;
+
+      // Se por algum motivo o WhatsApp não entregou o ID do autor, ignoramos
+      if (!userId) return;
+
+      // 2. Identifica grupo na primeira mensagem
       if (!this.groupId && chat.isGroup && chat.name === config.groupName) {
         this.groupId = chat.id._serialized;
         console.log(`✅ Grupo identificado via primeira mensagem: "${config.groupName}"`);
       }
-  
-      // 1. Ignora mensagens fora do grupo alvo
-      if (!this.groupId || chat.id._serialized !== this.groupId) return;
-  
-      // 2. FILTRO DE SEGURANÇA: Ignora se a mensagem contém os títulos dos menus
-      // Isso é mais seguro que startsWith para evitar loops
-      const botMenus = ["💰", "📊", "📤", "📥", "🤖", "✅", "❌", "💵", "🏷️"];
-      if (botMenus.some((prefix) => body.includes(prefix))) return;
 
-      // 3. Ignora mensagens vazias (como figurinhas ou mídias sem legenda)
-      if (!body) return;
-  
-      const userName = (await message.getContact()).pushname || 'Usuário';
-      console.log(`📨 Mensagem recebida: ${body} from: ${userName}`);
-  
-      // Passa para o handler
+      // 3. Ignora mensagens fora do grupo alvo
+      if (!this.groupId || chat.id._serialized !== this.groupId) return;
+
+      // 4. Filtro Anti-Loop (Ignora mensagens do próprio Bot)
+      const botPrefixes = ["💰", "📊", "📤", "📥", "🤖", "✅", "❌", "💵", "🏷️"];
+      if (botPrefixes.some((prefix) => body.includes(prefix))) return;
+
+      // 5. Log de depuração (Pegamos o nome de forma segura)
+      let userName = 'Usuário';
+      try {
+        // Tentamos pegar o contato, se falhar, usamos o ID formatado
+        const contact = await message.getContact();
+        userName = contact.pushname || contact.name || 'Usuário';
+      } catch (err) {
+        userName = userId.split('@')[0]; 
+      }
+
+      console.log(`📨 Mensagem recebida: ${body} de: ${userName}`);
+
+      // 6. Passa para o handler
       await this.commandHandler.handleCommand(message);
-  
+
     } catch (e) {
-      console.log("❌ Erro ao processar mensagem:", e);
+      console.error("❌ Erro crítico ao processar mensagem:", e);
     }
   }
   
