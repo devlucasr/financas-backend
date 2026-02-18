@@ -13,20 +13,16 @@ export class WhatsAppBot {
   constructor() {
     this.client = new Client({
       authStrategy: new LocalAuth({
-        dataPath: "/app/.wwebjs_auth",
+        dataPath: "./.wwebjs_auth",
       }),
       puppeteer: {
-        executablePath:
-          process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
         headless: true,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
-          "--no-first-run",
-          "--no-zygote",
-          "--single-process",
-        ],        
+        ],
       },
     });
     
