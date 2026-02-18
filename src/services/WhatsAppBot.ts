@@ -12,189 +12,129 @@ export class WhatsAppBot {
 
   constructor() {
     this.client = new Client({
-      authStrategy: new LocalAuth({
-        dataPath: "./.wwebjs_auth",
-      }),
+      authStrategy: new LocalAuth({ dataPath: "./.wwebjs_auth" }),
       puppeteer: {
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
         headless: true,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-software-rasterizer",
         ],
       },
     });
-    
+
     this.commandHandler = new CommandHandler();
     this.db = new DatabaseService();
-    this.setupEventHandlers();
+    this.setupEvents();
   }
 
-  /**
-   * Configura os event handlers
-   */
-  private setupEventHandlers(): void {
-    // QR Code
+  private setupEvents() {
+    // QR CODE
     this.client.on("qr", async (qr) => {
       const url = await QRCode.toDataURL(qr);
-    
-      console.log("QR_CODE_URL:", url);
+      console.log("\n🔐 ESCANEIE O QR CODE:");
+      console.log(url, "\n");
     });
 
-    // Cliente pronto
+    // READY
     this.client.on("ready", async () => {
-      console.log("✅ Bot conectado ao WhatsApp!\n");
+      console.log("✅ Bot conectado!");
 
-      // Testa conexão com banco
-      const dbConnected = await this.db.testConnection();
-      if (dbConnected) {
-        console.log("✅ Banco de dados conectado!\n");
-      } else {
-        console.log("⚠️  Erro ao conectar com banco de dados!");
-        console.log("📝 Execute: npm run db:setup e siga as instruções\n");
+      try {
+        const chats = await this.client.getChats();
+        const groups = chats.filter((c) => c.isGroup);
+        if (groups.length > 0) {
+          console.log("📋 Grupos encontrados:");
+          groups.forEach((g) => console.log("-", g.name));
+        }
+
+        const targetGroup = groups.find((g) => g.name === config.groupName);
+        if (targetGroup) {
+          this.groupId = targetGroup.id._serialized;
+          console.log(`✅ Grupo encontrado: ${targetGroup.name}`);
+        } else {
+          console.log(`⚠️ Grupo "${config.groupName}" não encontrado no momento.`);
+          console.log("Será identificado automaticamente na primeira mensagem recebida.");
+        }
+      } catch (err: any) {
+        console.log("⚠️ Não foi possível listar grupos via getChats(). Será identificado na primeira mensagem recebida.", err.message);
       }
 
-      await this.findTargetGroup();
-      this.displayInfo();
+      this.showInfo();
     });
 
-    // Autenticação
-    this.client.on("authenticated", () => {
-      console.log("✅ Autenticação realizada!");
-    });
+    // AUTH
+    this.client.once("authenticated", () => console.log("✅ Autenticação realizada!"));
+    this.client.on("auth_failure", (msg) => console.log("❌ Falha auth:", msg));
 
-    // Falha na autenticação
-    this.client.on("auth_failure", (msg) => {
-      console.error("❌ Falha na autenticação:", msg);
-    });
-
-    // Desconectado
+    // DISCONNECT
     this.client.on("disconnected", async (reason) => {
-      console.log("⚠️ Cliente desconectado:", reason);
-      console.log("🔄 Reiniciando em 5 segundos...");
-
-      setTimeout(async () => {
-        try {
-          await this.client.initialize();
-          console.log("✅ Bot reconectado!");
-        } catch (error) {
-          console.error("❌ Erro ao reiniciar:", error);
-        }
-      }, 5000);
+      console.log("⚠️ Desconectado:", reason);
+      await this.delay(5000);
+      await this.client.initialize();
     });
 
-    // Nova mensagem (usa apenas um evento para evitar duplicação)
-    this.client.on("message_create", async (message: Message) => {
+    // MESSAGE
+    this.client.on("message_create", async (message) => {
       await this.handleMessage(message);
     });
   }
 
-  /**
-   * Encontra o grupo alvo
-   */
-  private async findTargetGroup(): Promise<void> {
-    try {
-      const chats = await this.client.getChats();
-      const groups = chats.filter((chat) => chat.isGroup);
-
-      // Loga grupos disponíveis para facilitar debug de nome
-      if (groups.length > 0) {
-        console.log("📋 Grupos encontrados:");
-        groups.forEach((g) => console.log(` - ${g.name}`));
-        console.log("");
-      } else {
-        console.warn("⚠️ Nenhum grupo encontrado na conta.");
-      }
-
-      // Busca o grupo configurado
-      const targetGroup = groups.find(
-        (chat) => chat.name === config.groupName
-      );
-
-      if (targetGroup) {
-        this.groupId = targetGroup.id._serialized;
-        console.log(`✅ Grupo alvo encontrado: "${config.groupName}"`);
-        console.log(`📱 Bot operando no grupo correto!\n`);
-      } else {
-        console.warn(`⚠️  ATENÇÃO: Grupo "${config.groupName}" NÃO encontrado!\n`);
-        console.log("💡 Copie o nome EXATO de um dos grupos acima e cole no .env:");
-        console.log(`   GROUP_NAME=Nome Exato Do Grupo\n`);
-        console.log("⚠️  O bot NÃO vai responder até você configurar o grupo correto!\n");
-      }
-    } catch (error) {
-      console.warn("⚠️ Não foi possível listar os grupos (getChats falhou). Vou tentar identificar o grupo na primeira mensagem recebida.", error);
-    }
-  }
-
-  /**
-   * Processa mensagens
-   */
-  private async handleMessage(message: Message): Promise<void> {
+  private async handleMessage(message: Message) {
     try {
       const chat = await message.getChat();
-
-      // Se ainda não temos groupId (falhou getChats), tenta identificar pelo nome do chat atual
+      const userId = message.author || message.from;
+      const userName = (await message.getContact()).pushname || 'Usuário';
+      const body = message.body.trim();
+  
+      // Identifica grupo na primeira mensagem
       if (!this.groupId && chat.isGroup && chat.name === config.groupName) {
         this.groupId = chat.id._serialized;
-        console.log(`✅ Grupo alvo identificado pelo chat: "${config.groupName}"`);
+        console.log(`✅ Grupo identificado via primeira mensagem: "${config.groupName}"`);
       }
-
-      // Ignora mensagens fora do grupo alvo ANTES de fazer qualquer log
-      if (!this.groupId || chat.id._serialized !== this.groupId) {
-        return; // Silenciosamente ignora
-      }
-
-      const messageBody = message.body.trim();
-      
-      // IMPORTANTE: Ignora mensagens do bot (começam com emojis específicos)
-      // Essa é a forma mais confiável de identificar mensagens do bot
-      const botPrefixes = ['💰', '📤', '📥', '✅', '❌', '📊', '🤖', '💳', '💵', '⚠️', '🏷️', 'ℹ️'];
-      if (botPrefixes.some(prefix => messageBody.startsWith(prefix))) {
-        return; // Silenciosamente ignora mensagens do próprio bot
-      }
-
-      // Log para debug (apenas em desenvolvimento)
-      console.log(`📨 Mensagem recebida: "${messageBody.substring(0, 50)}${messageBody.length > 50 ? '...' : ''}"`);
-
-      // Processa a mensagem no CommandHandler
+  
+      // Ignora mensagens fora do grupo alvo
+      if (!this.groupId || chat.id._serialized !== this.groupId) return;
+  
+      // Ignora mensagens enviadas pelo próprio bot (prefixos de bot)
+      const botPrefixes = ["💰", "📊", "📤", "📥", "🤖", "✅", "❌"];
+      if (botPrefixes.some((prefix) => body.startsWith(prefix))) return;
+  
+      // Loga qualquer mensagem recebida **uma vez só**
+      console.log(`📨 Mensagem recebida: ${body} from: ${userName}`);
+  
+      // Passa para o handler
       await this.commandHandler.handleCommand(message);
-      
-    } catch (error) {
-      console.error("❌ Erro ao processar mensagem:", error);
+  
+    } catch (e) {
+      console.log("❌ Erro ao processar mensagem:", e);
     }
   }
-
-  /**
-   * Exibe informações do bot
-   */
-  private displayInfo(): void {
-    console.log("═".repeat(60));
-    console.log("🤖 BOT FINANCEIRO ATIVO");
-    console.log("═".repeat(60));
-    console.log(`📱 Grupo: ${config.groupName}`);
-    console.log(`\n🎯 Comandos disponíveis:`);
-    console.log("   !lancar  - Registrar gasto ou entrada");
-    console.log("   !saldo   - Ver saldo do mês");
-    console.log("   !ajuda   - Mostrar ajuda");
-    console.log("   !cancelar - Cancelar lançamento\n");
-    console.log("═".repeat(60));
-    console.log("✅ Aguardando comandos...\n");
-  }
-
-  /**
-   * Inicia o bot
-   */
-  async start(): Promise<void> {
-    console.log("🚀 Iniciando Bot Financeiro...\n");
+  
+  async start() {
+    console.log("\n🚀 Iniciando Bot...\n");
     await this.client.initialize();
   }
 
-  /**
-   * Para o bot
-   */
+  private showInfo() {
+    console.log("\n══════════════════════════════");
+    console.log("🤖 BOT ONLINE");
+    console.log("Grupo:", config.groupName, "(ou identificado automaticamente)");
+    console.log("\nComandos:");
+    console.log("!lancar");
+    console.log("!saldo");
+    console.log("!ajuda");
+    console.log("══════════════════════════════\n");
+  }
+
+  private delay(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   async stop(): Promise<void> {
-    console.log("\n⏹️  Encerrando bot...");
+    console.log("\nEncerrando bot...");
     await this.client.destroy();
   }
 }

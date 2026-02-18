@@ -27,6 +27,7 @@ export interface MonthlyBalance {
 
 export interface UserSession {
   userId: string;
+  lastActivity?: number;
   step:
     | "awaiting_type"
     | "awaiting_forma_pagamento"

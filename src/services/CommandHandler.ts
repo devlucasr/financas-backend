@@ -10,33 +10,41 @@ export class CommandHandler {
 
   constructor() {
     this.db = new DatabaseService();
+
+    // Limpa sessões inativas a cada 5 minutos
+    setInterval(() => {
+      const now = Date.now();
+      this.sessions.forEach((session, key) => {
+        const sessionTime = session.lastActivity || session.data.data?.getTime?.() || now;
+        if (now - sessionTime > 1000 * 60 * 30) {
+          this.sessions.delete(key);
+        }
+      });
+    }, 1000 * 60 * 5);
   }
 
-  /**
-   * Responde uma mensagem sem tentar marcar como lida (evita bug do sendSeen)
-   */
+  // ---------------------------
+  // Helper para enviar mensagens
+  // ---------------------------
   private async reply(message: Message, content: string): Promise<void> {
     try {
-      await message.reply(content, undefined, { sendSeen: false });
+      await message.reply(content);
     } catch (error) {
-      console.error('❌ Erro ao responder mensagem:', error);
+      try {
+        const chat = await message.getChat();
+        await chat.sendMessage(content);
+      } catch (err) {
+        console.error('❌ Erro ao enviar mensagem via fallback:', err);
+      }
     }
   }
 
-  /**
-   * Extrai número de telefone limpo de IDs do WhatsApp
-   * Exemplo: "5511999999999@c.us" → "11 99999-9999"
-   */
+  // ---------------------------
+  // Formata número de WhatsApp
+  // ---------------------------
   private formatPhoneNumber(rawId: string): string {
-    // Remove sufixos do WhatsApp (@c.us, @g.us, @lid, etc)
     const cleaned = rawId.split('@')[0].split(':')[0];
-    
-    // Se não é um número, retorna "Usuário"
-    if (!/^\d+$/.test(cleaned)) {
-      return 'Usuário';
-    }
-    
-    // Se tem código do país (55 do Brasil)
+    if (!/^\d+$/.test(cleaned)) return 'Usuário';
     if (cleaned.startsWith('55') && cleaned.length >= 12) {
       const ddd = cleaned.substring(2, 4);
       const numero = cleaned.substring(4);
@@ -44,34 +52,44 @@ export class CommandHandler {
       const parte2 = numero.substring(numero.length - 4);
       return `(${ddd}) ${parte1}-${parte2}`;
     }
-    
-    // Outros formatos: só retorna os últimos 4 dígitos
     return `Usuário *${cleaned.slice(-4)}`;
   }
 
-  /**
-   * Processa comandos e respostas do bot
-   */
+  // ---------------------------
+  // Processa mensagens
+  // ---------------------------
   async handleCommand(message: Message): Promise<void> {
     const messageBody = message.body.trim();
     const command = messageBody.toLowerCase();
+    const userId = message.author || message.from;
     
-    // Usa message.from como ID (mais confiável em grupos)
-    const userId = message.from;
-    
-    // Tenta pegar o nome do contato (com fallback seguro)
+    if (!userId) return;
+
+    // --- NOVO FILTRO MAIS ABRANGENTE ---
+    // Lista de emojis/termos que indicam que a mensagem veio do bot
+    const botIdentifiers = [
+      "💰 *NOVO LANCHAMENTO*",
+      "💵 *",          // Bloqueia o resumo da categoria selecionada
+      "🏷️ *O QUE",      // Bloqueia o menu de categorias
+      "📊 *SALDO",      // Bloqueia o saldo
+      "🤖 *BOT",        // Bloqueia a ajuda
+      "❌ Valor inválido", // Bloqueia o próprio erro para não entrar em loop
+      "❌ Opção inválida"
+    ];
+
+    if (botIdentifiers.some(id => message.body.includes(id))) {
+      return; 
+    }
+    // ------------------------------------
+
     let userName = 'Usuário';
     try {
       const contact = await message.getContact();
       userName = contact.pushname || contact.name || contact.number || 'Usuário';
-    } catch (error) {
-      // Se falhar ao pegar contato, formata o número do remetente
-      const rawId = message.author || message.from || '';
-      userName = this.formatPhoneNumber(rawId);
+    } catch {
+      userName = this.formatPhoneNumber(userId);
     }
 
-    // IMPORTANTE: Verifica !cancelar PRIMEIRO, antes de processar sessão
-    // Isso permite cancelar em QUALQUER momento do lançamento
     if (command === '!cancelar') {
       if (this.sessions.has(userId)) {
         this.sessions.delete(userId);
@@ -82,44 +100,43 @@ export class CommandHandler {
       return;
     }
 
-    // Se o usuário tem uma sessão ativa, QUALQUER mensagem é processada como resposta
     if (this.sessions.has(userId)) {
+      // Se a mensagem for muito longa, provavelmente é o menu de categorias (que tem 63 itens)
+      // Um valor ou comando raramente terá mais de 50 caracteres.
+      if (messageBody.length > 50) {
+        return; 
+      }
+      
       await this.handleSessionResponse(message, userId, userName);
       return;
     }
 
-    // Se não tem sessão, só processa comandos (começam com !)
-    if (!command.startsWith('!')) {
-      return; // Ignora mensagens normais sem sessão
-    }
+    if (!command.startsWith('!')) return;
 
-    // Comando !lancar
-    if (command === '!lancar') {
-      await this.startTransaction(message, userId, userName);
-      return;
-    }
-
-    // Comando !saldo
-    if (command === '!saldo') {
-      await this.showBalance(message);
-      return;
-    }
-
-    // Comando !ajuda
-    if (command === '!ajuda' || command === '!help') {
-      await this.showHelp(message);
-      return;
+    switch (command) {
+      case '!lancar':
+        await this.startTransaction(message, userId, userName);
+        break;
+      case '!saldo':
+        await this.showBalance(message);
+        break;
+      case '!ajuda':
+      case '!help':
+        await this.showHelp(message);
+        break;
+      default:
+        await this.reply(message, '❌ Comando não reconhecido.');
     }
   }
 
-  /**
-   * Inicia um novo lançamento
-   */
+  // ---------------------------
+  // Inicia lançamento
+  // ---------------------------
   private async startTransaction(message: Message, userId: string, userName: string): Promise<void> {
-    // Cria uma nova sessão
     this.sessions.set(userId, {
       userId,
       step: 'awaiting_type',
+      lastActivity: Date.now(),
       data: {
         usuario: userName,
         data: new Date(),
@@ -127,271 +144,200 @@ export class CommandHandler {
       }
     });
 
-    const chat = await message.getChat();
-    
-    // Por enquanto, usa texto normal (botões ainda não são bem suportados)
-    await this.reply(message, `
-💰 *NOVO LANÇAMENTO*
+    const text =
+      "💰 *NOVO LANÇAMENTO*\n\n" +
+      "Escolha o tipo de transação:\n\n" +
+      "1️⃣ GASTO\n" +
+      "2️⃣ ENTRADA\n\n" +
+      "✏️ Digite 1 ou 2\n" +
+      "⚠️ Para cancelar, digite: !cancelar";
 
-Escolha o tipo de transação:
-
-1️⃣ GASTO
-2️⃣ ENTRADA
-
-_Digite 1 ou 2_
-_(!cancelar para cancelar)_
-    `.trim());
+    await this.reply(message, text);
   }
 
-  /**
-   * Processa respostas do usuário durante o fluxo
-   */
+  // ---------------------------
+  // Processa respostas de sessão
+  // ---------------------------
   private async handleSessionResponse(message: Message, userId: string, userName: string): Promise<void> {
     const session = this.sessions.get(userId)!;
     const response = message.body.trim();
+    session.lastActivity = Date.now();
 
     switch (session.step) {
       case 'awaiting_type':
         await this.handleTypeSelection(message, session, response);
         break;
-
       case 'awaiting_forma_pagamento':
         await this.handleFormaPagamentoSelection(message, session, response);
         break;
-
       case 'awaiting_categoria':
         await this.handleCategorySelection(message, session, response);
         break;
-
       case 'awaiting_parcelas':
         await this.handleParcelasSelection(message, session, response);
         break;
-
       case 'awaiting_value':
         await this.handleValueInput(message, session, response);
         break;
+      default:
+        await this.reply(message, '❌ Erro interno: etapa desconhecida. Use !cancelar e tente novamente.');
+        this.sessions.delete(userId);
     }
   }
 
-  /**
-   * Processa seleção de tipo (Gasto/Entrada)
-   */
+  // ---------------------------
+  // Etapas do fluxo
+  // ---------------------------
   private async handleTypeSelection(message: Message, session: UserSession, response: string): Promise<void> {
     if (response === '1') {
-      // GASTO: Pergunta forma de pagamento primeiro
       session.data.tipo = TransactionType.GASTO;
       session.step = 'awaiting_forma_pagamento';
 
-      const formas = config.formasPagamento.map((forma, idx) => `${idx + 1}️⃣ ${forma}`).join('\n');
-      await this.reply(message, `
-📤 *GASTO SELECIONADO*
+      const formas = config.formasPagamento.map((f, i) => `${i + 1}️⃣ ${f}`).join('\n');
+      await this.reply(message,
+        `📤 *GASTO SELECIONADO*\n\n` +
+        `Como você pagou?\n\n` +
+        `${formas}\n\n` +
+        `✏️ Digite o número da forma de pagamento\n` +
+        `⚠️ Para cancelar, digite: !cancelar`
+      );
 
-Como você pagou?
-
-${formas}
-
-_Digite o número da forma de pagamento_
-_(!cancelar para cancelar)_
-      `.trim());
     } else if (response === '2') {
-      // ENTRADA: Pergunta origem direto (sem forma de pagamento)
       session.data.tipo = TransactionType.ENTRADA;
       session.step = 'awaiting_categoria';
 
-      const origens = config.categoriasEntrada.map((origem, idx) => `${idx + 1}️⃣ ${origem}`).join('\n');
-      await this.reply(message, `
-📥 *ENTRADA SELECIONADA*
+      const origens = config.categoriasEntrada.map((o, i) => `${i + 1}️⃣ ${o}`).join('\n');
+      await this.reply(message,
+        `📥 *ENTRADA SELECIONADA*\n\n` +
+        `Escolha a origem:\n\n` +
+        `${origens}\n\n` +
+        `✏️ Digite o número da origem\n` +
+        `⚠️ Para cancelar, digite: !cancelar`
+      );
 
-Escolha a origem:
-
-${origens}
-
-_Digite o número da origem_
-_(!cancelar para cancelar)_
-      `.trim());
     } else {
       await this.reply(message, '❌ Opção inválida! Digite 1 para GASTO ou 2 para ENTRADA');
     }
   }
 
-  /**
-   * Processa seleção de forma de pagamento (só para GASTOS)
-   */
   private async handleFormaPagamentoSelection(message: Message, session: UserSession, response: string): Promise<void> {
-    const formaIndex = parseInt(response) - 1;
-
-    if (isNaN(formaIndex) || formaIndex < 0 || formaIndex >= config.formasPagamento.length) {
+    const idx = parseInt(response) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= config.formasPagamento.length) {
       await this.reply(message, '❌ Opção inválida! Digite um número válido da lista.');
       return;
     }
 
-    session.data.formaPagamento = config.formasPagamento[formaIndex];
+    session.data.formaPagamento = config.formasPagamento[idx];
 
-    if (!session.data.formaPagamento) {
-      await this.reply(message, '❌ Erro ao selecionar forma de pagamento. Tente novamente com !lancar');
-      this.sessions.delete(session.userId);
-      return;
-    }
-
-    // Se o nome contém "Parcelado" (case insensitive), pergunta quantidade de parcelas
     if (session.data.formaPagamento.toLowerCase().includes('parcelado')) {
       session.step = 'awaiting_parcelas';
-      await this.reply(message, `
-💳 *PARCELADO SELECIONADO*
-
-Em quantas vezes será parcelado?
-
-_Digite o número de parcelas (ex: 12)_
-_(!cancelar para cancelar)_
-      `.trim());
+      await this.reply(message,
+        `💳 *PARCELADO SELECIONADO*\n\n` +
+        `Em quantas vezes será parcelado?\n\n` +
+        `✏️ Digite o número de parcelas (ex: 12)\n` +
+        `⚠️ Para cancelar, digite: !cancelar`
+      );
     } else {
-      // Senão, vai direto para escolher a categoria
       session.step = 'awaiting_categoria';
-      this.showCategoryMenu(message, session);
+      await this.showCategoryMenu(message, session);
     }
   }
 
-  /**
-   * Mostra menu de categorias de gastos
-   */
-  private async showCategoryMenu(message: Message, session: UserSession): Promise<void> {
-    if (!config.categoriasGasto || config.categoriasGasto.length === 0) {
-      await this.reply(message, '❌ Erro: Nenhuma categoria de gasto configurada! Verifique o arquivo .env');
-      this.sessions.delete(session.userId);
-      return;
-    }
-
-    const categories = config.categoriasGasto.map((cat, idx) => `${idx + 1}️⃣ ${cat}`).join('\n');
-    
-    const formaPagText = session.data.formaPagamento 
-      ? `\n💳 Forma: ${session.data.formaPagamento}${session.data.parcelas ? ` (${session.data.parcelas}x)` : ''}`
-      : '';
-
-    await this.reply(message, `
-🏷️ *O QUE VOCÊ COMPROU?*${formaPagText}
-
-Escolha a categoria:
-
-${categories}
-
-_Digite o número da categoria_
-_(!cancelar para cancelar)_
-    `.trim());
-  }
-
-  /**
-   * Processa seleção de categoria
-   */
-  private async handleCategorySelection(message: Message, session: UserSession, response: string): Promise<void> {
-    const categoryIndex = parseInt(response) - 1;
-    const categories = session.data.tipo === TransactionType.GASTO 
-      ? config.categoriasGasto 
-      : config.categoriasEntrada;
-
-    if (isNaN(categoryIndex) || categoryIndex < 0 || categoryIndex >= categories.length) {
-      await this.reply(message, '❌ Opção inválida! Digite um número válido da lista.');
-      return;
-    }
-
-    session.data.categoria = categories[categoryIndex];
-
-    // Verificação de segurança
-    if (!session.data.categoria) {
-      await this.reply(message, '❌ Erro ao selecionar categoria. Tente novamente com !lancar');
-      this.sessions.delete(session.userId);
-      return;
-    }
-
-    // Agora sempre vai para digitar o valor (parcelas já foi tratado antes)
-    session.step = 'awaiting_value';
-    
-    const resumo = session.data.tipo === TransactionType.GASTO
-      ? `\n💳 ${session.data.formaPagamento || 'N/A'}${session.data.parcelas ? ` (${session.data.parcelas}x)` : ''}`
-      : '';
-
-    await this.reply(message, `
-💵 *${session.data.categoria.toUpperCase()}*${resumo}
-
-Digite o valor:
-
-_Exemplos: 100 ou 150.50 ou 1500_
-_(!cancelar para cancelar)_
-    `.trim());
-  }
-
-  /**
-   * Processa número de parcelas
-   */
   private async handleParcelasSelection(message: Message, session: UserSession, response: string): Promise<void> {
     const parcelas = parseInt(response);
-
     if (isNaN(parcelas) || parcelas < 1 || parcelas > 99) {
       await this.reply(message, '❌ Número inválido! Digite um número entre 1 e 99.');
       return;
     }
 
     session.data.parcelas = parcelas;
-    
-    // Agora vai para escolher a categoria
     session.step = 'awaiting_categoria';
     await this.showCategoryMenu(message, session);
   }
 
-  /**
-   * Processa valor e finaliza o lançamento
-   */
-  private async handleValueInput(message: Message, session: UserSession, response: string): Promise<void> {
-    // Remove R$ e espaços
-    let cleanValue = response.replace(/[R$\s]/g, '');
-    
-    // Detecta o formato e normaliza para formato EN (ponto como decimal)
-    const hasComma = cleanValue.includes(',');
-    const hasDot = cleanValue.includes('.');
-    
-    if (hasComma && hasDot) {
-      // Formato BR: 3.728,66 ou 1.234.567,89
-      // Remove pontos (milhares) e troca vírgula por ponto (decimal)
-      cleanValue = cleanValue.replace(/\./g, '').replace(',', '.');
-    } else if (hasComma) {
-      // Só vírgula: 150,50 (formato BR)
-      // Troca vírgula por ponto
-      cleanValue = cleanValue.replace(',', '.');
-    } else if (hasDot) {
-      // Só ponto: pode ser 6.50 (formato EN) ou 1.500 (mil e quinhentos BR)
-      // Se tem 3 dígitos após o ponto, é milhares (1.500)
-      // Se tem 1 ou 2 dígitos, é decimal (6.5 ou 6.50)
-      const parts = cleanValue.split('.');
-      if (parts.length === 2 && parts[1].length === 3) {
-        // É milhares: 1.500 → 1500
-        cleanValue = cleanValue.replace(/\./g, '');
-      }
-      // Senão, mantém o ponto como decimal: 6.50
+  private async showCategoryMenu(message: Message, session: UserSession): Promise<void> {
+    const categories = session.data.tipo === TransactionType.GASTO ? config.categoriasGasto : config.categoriasEntrada;
+    if (!categories || categories.length === 0) {
+      await this.reply(message, '❌ Nenhuma categoria configurada! Verifique o arquivo config.');
+      this.sessions.delete(session.userId);
+      return;
     }
-    // Se não tem nada, é inteiro: 100
-    
+
+    const catList = categories.map((c, i) => `${i + 1}️⃣ ${c}`).join('\n');
+    const formaText = session.data.formaPagamento
+      ? `\n💳 Forma: ${session.data.formaPagamento}${session.data.parcelas ? ` (${session.data.parcelas}x)` : ''}`
+      : '';
+
+    await this.reply(message,
+      `🏷️ *O QUE VOCÊ COMPROU?*${formaText}\n\n` +
+      `Escolha a categoria:\n\n` +
+      `${catList}\n\n` +
+      `✏️ Digite o número da categoria\n` +
+      `⚠️ Para cancelar, digite: !cancelar`
+    );
+  }
+
+  private async handleCategorySelection(message: Message, session: UserSession, response: string): Promise<void> {
+    // Garantir que estamos no passo correto
+    if (session.step !== 'awaiting_categoria') {
+      console.warn(`Usuário ${session.userId} enviou resposta fora do passo. Step atual: ${session.step}`);
+      await this.reply(message, '❌ Resposta recebida fora do passo esperado. Digite novamente o número da categoria ou !cancelar.');
+      return;
+    }
+  
+    // Pega categorias corretas
+    const categories = session.data.tipo === TransactionType.GASTO ? config.categoriasGasto : config.categoriasEntrada;
+  
+    // Transforma resposta em índice
+    const idx = parseInt(response.trim()) - 1;
+  
+    // Valida índice
+    if (isNaN(idx) || idx < 0 || idx >= categories.length) {
+      await this.reply(message, '❌ Opção inválida! Digite um número válido da lista.');
+      return;
+    }
+  
+    // Atualiza categoria e passo
+    session.data.categoria = categories[idx];
+    session.step = 'awaiting_value';
+  
+    // Monta resumo do gasto
+    const resumo = session.data.tipo === TransactionType.GASTO
+      ? `\n💳 ${session.data.formaPagamento || 'N/A'}${session.data.parcelas ? ` (${session.data.parcelas}x)` : ''}`
+      : '';
+  
+    // Envia mensagem de valor
+    await this.reply(message,
+      `💵 *${session.data.categoria.toUpperCase()}*${resumo}\n\n` +
+      `✏️ Digite o valor (ex: 100 ou 150.50)\n` +
+      `⚠️ Para cancelar, digite: !cancelar`
+    );
+  }
+  
+
+  private async handleValueInput(message: Message, session: UserSession, response: string): Promise<void> {
+    let cleanValue = response.replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.');
     const valor = parseFloat(cleanValue);
 
     if (isNaN(valor) || valor <= 0) {
-      await this.reply(message, '❌ Valor inválido! Digite um número válido (ex: 100, 150,50 ou 6.50)');
+      await this.reply(message, '❌ Valor inválido! Digite um número válido.');
       return;
     }
 
     session.data.valor = valor;
 
-    // Se for parcelado, cria múltiplas transações (uma para cada parcela)
     if (session.data.parcelas && session.data.parcelas > 1) {
       await this.createParceledTransaction(message, session);
     } else {
       await this.createSingleTransaction(message, session);
     }
 
-    // Limpa a sessão
     this.sessions.delete(session.userId);
   }
 
-  /**
-   * Cria uma transação única
-   */
+  // ---------------------------
+  // Cria lançamento único
+  // ---------------------------
   private async createSingleTransaction(message: Message, session: UserSession): Promise<void> {
     const transaction: Transaction = {
       tipo: session.data.tipo!,
@@ -403,77 +349,82 @@ _(!cancelar para cancelar)_
       mesReferencia: session.data.mesReferencia!
     };
 
-    const result = await this.db.addTransaction(transaction);
-
-    if (result.success) {
-      const emoji = transaction.tipo === TransactionType.ENTRADA ? '📥' : '📤';
-      const tipoText = transaction.tipo === TransactionType.ENTRADA ? 'ENTRADA' : 'GASTO';
-      
-      await this.reply(message, `
-${emoji} *${tipoText} REGISTRADO!*
-
-💵 Valor: R$ ${transaction.valor.toFixed(2)}
-🏷️ Categoria: ${transaction.categoria}
-👤 Usuário: ${transaction.usuario}
-
-✅ Lançamento salvo com sucesso!
-      `.trim());
-    } else {
-      await this.reply(message, `❌ Erro ao salvar: ${result.error}`);
+    try {
+      const result = await this.db.addTransaction(transaction);
+      if (result.success) {
+        const emoji = transaction.tipo === TransactionType.ENTRADA ? '📥' : '📤';
+        const tipoText = transaction.tipo === TransactionType.ENTRADA ? 'ENTRADA' : 'GASTO';
+        await this.reply(message,
+          `${emoji} *${tipoText} REGISTRADO!*\n\n` +
+          `💵 Valor: R$ ${transaction.valor.toFixed(2)}\n` +
+          `🏷️ Categoria: ${transaction.categoria}\n` +
+          `👤 Usuário: ${transaction.usuario}\n\n` +
+          `✅ Lançamento salvo com sucesso!`
+        );
+      } else {
+        await this.reply(message, `❌ Erro ao salvar: ${result.error || 'desconhecido'}`);
+      }
+    } catch (error) {
+      await this.reply(message, `❌ Erro ao salvar: ${error}`);
     }
   }
 
-  /**
-   * Cria transações parceladas
-   */
+  // ---------------------------
+  // Cria lançamento parcelado
+  // ---------------------------
   private async createParceledTransaction(message: Message, session: UserSession): Promise<void> {
-    const valorParcela = session.data.valor! / session.data.parcelas!;
+    const parcelas = session.data.parcelas!;
+    const valorTotal = session.data.valor!;
+    const valorParcela = parseFloat((valorTotal / parcelas).toFixed(2));
+
+    let somaParcelas = 0;
     let successCount = 0;
 
-    // Cria uma transação para cada parcela
-    for (let i = 1; i <= session.data.parcelas!; i++) {
+    for (let i = 1; i <= parcelas; i++) {
       const parcelaDate = new Date(session.data.data!);
       parcelaDate.setMonth(parcelaDate.getMonth() + (i - 1));
+
+      const valorFinal = (i === parcelas) ? parseFloat((valorTotal - somaParcelas).toFixed(2)) : valorParcela;
+      somaParcelas += valorFinal;
 
       const transaction: Transaction = {
         tipo: TransactionType.GASTO,
         formaPagamento: session.data.formaPagamento,
         categoria: session.data.categoria!,
-        valor: valorParcela,
-        parcelas: session.data.parcelas,
+        valor: valorFinal,
+        parcelas,
         parcelaAtual: i,
-        descricao: `Parcela ${i}/${session.data.parcelas}`,
+        descricao: `Parcela ${i}/${parcelas}`,
         usuario: session.data.usuario!,
         data: parcelaDate,
         mesReferencia: format(parcelaDate, 'yyyy-MM')
       };
 
-      const result = await this.db.addTransaction(transaction);
-      if (result.success) successCount++;
+      try {
+        const result = await this.db.addTransaction(transaction);
+        if (result.success) successCount++;
+      } catch {}
     }
 
-    await this.reply(message, `
-💳 *PARCELAMENTO REGISTRADO!*
-
-💵 Valor Total: R$ ${session.data.valor!.toFixed(2)}
-💳 Parcelas: ${session.data.parcelas}x de R$ ${valorParcela.toFixed(2)}
-🏷️ Categoria: ${session.data.categoria}
-👤 Usuário: ${session.data.usuario}
-
-✅ ${successCount}/${session.data.parcelas} parcelas salvas!
-_Cada parcela foi lançada em um mês diferente_
-    `.trim());
+    await this.reply(message,
+      `💳 *PARCELAMENTO REGISTRADO!*\n\n` +
+      `💵 Valor Total: R$ ${valorTotal.toFixed(2)}\n` +
+      `💳 Parcelas: ${parcelas}x de aproximadamente R$ ${valorParcela.toFixed(2)}\n` +
+      `🏷️ Categoria: ${session.data.categoria}\n` +
+      `👤 Usuário: ${session.data.usuario}\n\n` +
+      `✅ ${successCount}/${parcelas} parcelas salvas!\n` +
+      `⚠️ Cada parcela foi lançada em um mês diferente`
+    );
   }
 
-  /**
-   * Mostra o saldo do mês
-   */
+  // ---------------------------
+  // Mostra saldo do mês
+  // ---------------------------
   private async showBalance(message: Message): Promise<void> {
     try {
       const mesAtual = format(new Date(), 'yyyy-MM');
       const balance = await this.db.getMonthlyBalance(mesAtual);
 
-      // Garante valores numéricos válidos (nunca NaN ou undefined)
       const totalEntradas = balance.totalEntradas || 0;
       const totalGastos = balance.totalGastos || 0;
       const saldo = balance.saldo || 0;
@@ -481,57 +432,46 @@ _Cada parcela foi lançada em um mês diferente_
       const countGastos = balance.countGastos || 0;
 
       const saldoEmoji = saldo >= 0 ? '✅' : '⚠️';
-      
-      // Formata mês em português manualmente
-      const meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 
-                     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+      const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
       const data = new Date();
       const mesFormatado = `${meses[data.getMonth()]}/${data.getFullYear()}`;
 
-      // Mensagem customizada se não há lançamentos
       const mensagemAdicional = countEntradas === 0 && countGastos === 0
-        ? '\n💡 _Ainda não há lançamentos este mês. Use !lancar para começar._'
+        ? '\n💡 Ainda não há lançamentos este mês. Use !lancar para começar.'
         : saldo < 0 
-        ? '\n⚠️ _Atenção: Você está gastando mais do que ganha!_'
-        : '';
+          ? '\n⚠️ Atenção: Você está gastando mais do que ganha!'
+          : '';
 
-      await this.reply(message, `
-📊 *SALDO DO MÊS*
-📅 ${mesFormatado}
-
-📥 Entradas: R$ ${totalEntradas.toFixed(2)}
-📤 Gastos: R$ ${totalGastos.toFixed(2)}
-
-${saldoEmoji} *Saldo: R$ ${saldo.toFixed(2)}*${mensagemAdicional}
-      `.trim());
+      await this.reply(message,
+        `📊 *SALDO DO MÊS*\n` +
+        `📅 ${mesFormatado}\n\n` +
+        `📥 Entradas: R$ ${totalEntradas.toFixed(2)}\n` +
+        `📤 Gastos: R$ ${totalGastos.toFixed(2)}\n\n` +
+        `${saldoEmoji} *Saldo: R$ ${saldo.toFixed(2)}*${mensagemAdicional}`
+      );
     } catch (error) {
       console.error('❌ Erro ao mostrar saldo:', error);
       await this.reply(message, '❌ Erro ao buscar saldo. Tente novamente em instantes.');
     }
   }
 
-  /**
-   * Mostra ajuda
-   */
+  // ---------------------------
+  // Mostra ajuda
+  // ---------------------------
   private async showHelp(message: Message): Promise<void> {
-    await this.reply(message, `
-🤖 *BOT FINANCEIRO - COMANDOS*
-
-*!lancar* - Registrar novo gasto ou entrada
-*!saldo* - Ver saldo do mês atual
-*!ajuda* - Mostrar esta mensagem
-*!cancelar* - Cancelar lançamento em andamento
-
-📝 *Como usar:*
-1. Digite !lancar
-2. Escolha tipo (Gasto/Entrada)
-3. Escolha categoria
-4. Digite o valor
-5. Pronto!
-
-💡 *Dica:* Para gastos parcelados, escolha a categoria "Parcelado" e informe a quantidade de vezes.
-    `.trim());
+    await this.reply(message,
+      `🤖 *BOT FINANCEIRO - COMANDOS*\n\n` +
+      `*!lancar* - Registrar novo gasto ou entrada\n` +
+      `*!saldo* - Ver saldo do mês atual\n` +
+      `*!ajuda* - Mostrar esta mensagem\n` +
+      `*!cancelar* - Cancelar lançamento em andamento\n\n` +
+      `📝 *Como usar:*\n` +
+      `1️⃣ Digite !lancar\n` +
+      `2️⃣ Escolha tipo (Gasto/Entrada)\n` +
+      `3️⃣ Escolha categoria\n` +
+      `4️⃣ Digite o valor\n` +
+      `5️⃣ Pronto!\n\n` +
+      `💡 *Dica:* Para gastos parcelados, escolha a forma de pagamento "Parcelado" e informe a quantidade de vezes.`
+    );
   }
-
 }
-
