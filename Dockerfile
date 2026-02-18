@@ -1,21 +1,30 @@
-FROM node:18-slim AS builder
-WORKDIR /app
+FROM node:20-slim
 
-COPY package*.json tsconfig.json ./
-COPY src ./src
-COPY supabase.d.ts ./supabase.d.ts
-RUN npm ci
-RUN npm run build
+# Instala Chromium
+RUN apt-get update && apt-get install -y \
+  chromium \
+  chromium-sandbox \
+  fonts-liberation \
+  libatk-bridge2.0-0 \
+  libgtk-3-0 \
+  libnss3 \
+  libxss1 \
+  libasound2 \
+  libgbm1 \
+  xdg-utils \
+  && rm -rf /var/lib/apt/lists/*
 
-FROM node:18-slim
+# Define variável do chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 WORKDIR /app
-ENV NODE_ENV=production
 
 COPY package*.json ./
-RUN npm ci --omit=dev
 
-COPY --from=builder /app/dist ./dist
+RUN npm install
 
-RUN mkdir -p /app/.wwebjs_auth
+COPY . .
+
+RUN npm run build
 
 CMD ["node", "dist/index.js"]
