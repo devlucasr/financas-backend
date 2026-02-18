@@ -74,8 +74,18 @@ export class WhatsAppBot {
     });
 
     // Desconectado
-    this.client.on("disconnected", (reason) => {
-      console.log("⚠️  Cliente desconectado:", reason);
+    this.client.on("disconnected", async (reason) => {
+      console.log("⚠️ Cliente desconectado:", reason);
+      console.log("🔄 Reiniciando em 5 segundos...");
+
+      setTimeout(async () => {
+        try {
+          await this.client.initialize();
+          console.log("✅ Bot reconectado!");
+        } catch (error) {
+          console.error("❌ Erro ao reiniciar:", error);
+        }
+      }, 5000);
     });
 
     // Nova mensagem (usa apenas um evento para evitar duplicação)
