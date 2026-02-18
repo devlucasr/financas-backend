@@ -85,8 +85,6 @@ export class WhatsAppBot {
   private async handleMessage(message: Message) {
     try {
       const chat = await message.getChat();
-      const userId = message.author || message.from;
-      const userName = (await message.getContact()).pushname || 'Usuário';
       const body = message.body.trim();
   
       // Identifica grupo na primeira mensagem
@@ -95,14 +93,18 @@ export class WhatsAppBot {
         console.log(`✅ Grupo identificado via primeira mensagem: "${config.groupName}"`);
       }
   
-      // Ignora mensagens fora do grupo alvo
+      // 1. Ignora mensagens fora do grupo alvo
       if (!this.groupId || chat.id._serialized !== this.groupId) return;
   
-      // Ignora mensagens enviadas pelo próprio bot (prefixos de bot)
-      const botPrefixes = ["💰", "📊", "📤", "📥", "🤖", "✅", "❌"];
-      if (botPrefixes.some((prefix) => body.startsWith(prefix))) return;
+      // 2. FILTRO DE SEGURANÇA: Ignora se a mensagem contém os títulos dos menus
+      // Isso é mais seguro que startsWith para evitar loops
+      const botMenus = ["💰", "📊", "📤", "📥", "🤖", "✅", "❌", "💵", "🏷️"];
+      if (botMenus.some((prefix) => body.includes(prefix))) return;
+
+      // 3. Ignora mensagens vazias (como figurinhas ou mídias sem legenda)
+      if (!body) return;
   
-      // Loga qualquer mensagem recebida **uma vez só**
+      const userName = (await message.getContact()).pushname || 'Usuário';
       console.log(`📨 Mensagem recebida: ${body} from: ${userName}`);
   
       // Passa para o handler
