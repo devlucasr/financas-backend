@@ -1,5 +1,5 @@
 import { Client, LocalAuth, Message } from "whatsapp-web.js";
-import qrcode from "qrcode-terminal";
+import QRCode from "qrcode";
 import { CommandHandler } from "./CommandHandler";
 import { DatabaseService } from "../database/supabase";
 import { config } from "../config/config";
@@ -38,12 +38,10 @@ export class WhatsAppBot {
    */
   private setupEventHandlers(): void {
     // QR Code
-    this.client.on("qr", (qr) => {
-      console.log("\n🔐 Escaneie o QR Code abaixo com seu WhatsApp:\n");
-      qrcode.generate(qr, { small: true });
-      console.log(
-        "\n📱 Abra: WhatsApp > Configurações > Aparelhos conectados > Conectar\n"
-      );
+    this.client.on("qr", async (qr) => {
+      const url = await QRCode.toDataURL(qr);
+    
+      console.log("QR_CODE_URL:", url);
     });
 
     // Cliente pronto
