@@ -36,27 +36,22 @@ export class WhatsAppBot {
         args: [
 
           "--no-sandbox",
+          
           "--disable-setuid-sandbox",
-
+          
           "--disable-dev-shm-usage",
-
+          
           "--disable-gpu",
-
-          "--disable-extensions",
-
-          "--disable-accelerated-2d-canvas",
-
-          "--disable-infobars",
-
-          "--disable-web-security",
-
-          "--no-first-run",
-
+          
           "--no-zygote",
-
-          "--single-process"
-
-        ],
+          
+          "--single-process",
+          
+          "--disable-features=site-per-process",
+          
+          "--disable-extensions"
+          
+          ]
 
         timeout: 60000
 
