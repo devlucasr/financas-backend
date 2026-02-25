@@ -51,7 +51,7 @@ export class WhatsAppBot {
           
           "--disable-extensions"
           
-          ]
+          ],
 
         timeout: 60000
 
