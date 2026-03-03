@@ -19,6 +19,13 @@ export const config = {
     .split(",")
     .map((c) => c.trim()),
 
+  //Tipos de cartões
+  cartoes: (
+    process.env.CARTOES || "Nubank Lucas, Nubank Julia, Inter, Will, Caixa, PicPay, Leroy"
+  )
+    .split(",")
+    .map((c) => c.trim()),
+  
   // Categorias de gastos detalhadas
   categoriasGasto: (
     process.env.CATEGORIAS_GASTO || "Mercado,Restaurante,Combustível,Outros"

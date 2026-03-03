@@ -170,6 +170,9 @@ export class CommandHandler {
       case 'awaiting_forma_pagamento':
         await this.handleFormaPagamentoSelection(message, session, response);
         break;
+      case 'awaiting_cartao':
+          await this.handleCartaoSelection(message, session, response);
+          break;
       case 'awaiting_categoria':
         await this.handleCategorySelection(message, session, response);
         break;
@@ -220,27 +223,89 @@ export class CommandHandler {
     }
   }
 
-  private async handleFormaPagamentoSelection(message: Message, session: UserSession, response: string): Promise<void> {
+  private async handleFormaPagamentoSelection(
+    message: Message,
+    session: UserSession,
+    response: string
+  ): Promise<void> {
+  
     const idx = parseInt(response) - 1;
+  
     if (isNaN(idx) || idx < 0 || idx >= config.formasPagamento.length) {
       await this.reply(message, '❌ Opção inválida! Digite um número válido da lista.');
       return;
     }
-
-    session.data.formaPagamento = config.formasPagamento[idx];
-
-    if (session.data.formaPagamento.toLowerCase().includes('parcelado')) {
-      session.step = 'awaiting_parcelas';
-      await this.reply(message,
-        `💳 *PARCELADO SELECIONADO*\n\n` +
-        `Em quantas vezes será parcelado?\n\n` +
-        `✏️ Digite o número de parcelas (ex: 12)\n` +
+  
+    const formaSelecionada = config.formasPagamento[idx];
+    session.data.formaPagamento = formaSelecionada;
+  
+    if (this.formaExigeCartao(formaSelecionada)) {
+  
+      if (!config.cartoes || config.cartoes.length === 0) {
+        await this.reply(message, '❌ Nenhum cartão configurado no .env');
+        return;
+      }
+  
+      session.step = 'awaiting_cartao';
+  
+      const listaCartoes = config.cartoes
+        .map((c, i) => `${i + 1}️⃣ ${c}`)
+        .join('\n');
+  
+      await this.reply(
+        message,
+        `💳 *QUAL CARTÃO?*\n\n` +
+        `${listaCartoes}\n\n` +
+        `✏️ Digite o número do cartão\n` +
         `⚠️ Para cancelar, digite: !cancelar`
       );
-    } else {
-      session.step = 'awaiting_categoria';
-      await this.showCategoryMenu(message, session);
+  
+      return;
     }
+  
+    // ✅ Fluxo normal (PIX, Débito, Dinheiro, Cartão Flash, etc)
+    session.step = 'awaiting_categoria';
+    await this.showCategoryMenu(message, session);
+  }
+
+  private async handleCartaoSelection(
+    message: Message,
+    session: UserSession,
+    response: string
+  ): Promise<void> {
+  
+    const idx = parseInt(response) - 1;
+  
+    if (isNaN(idx) || idx < 0 || idx >= config.cartoes.length) {
+      await this.reply(message, '❌ Opção inválida! Digite um número válido da lista.');
+      return;
+    }
+  
+    const cartaoSelecionado = config.cartoes[idx];
+    session.data.cartao = cartaoSelecionado;
+  
+    const formaNormalizada = session.data.formaPagamento
+    ?.normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  
+    if (formaNormalizada === 'credito parcelado') {
+      session.step = 'awaiting_parcelas';
+  
+      await this.reply(
+        message,
+        `💳 Cartão: *${cartaoSelecionado}*\n\n` +
+        `✏️ Quantas parcelas?\n` +
+        `⚠️ Para cancelar, digite: !cancelar`
+      );
+  
+      return;
+    }
+  
+    // Crédito à vista
+    session.step = 'awaiting_categoria';
+    await this.showCategoryMenu(message, session);
   }
 
   private async handleParcelasSelection(message: Message, session: UserSession, response: string): Promise<void> {
@@ -302,8 +367,13 @@ export class CommandHandler {
     session.step = 'awaiting_value';
   
     // Monta resumo do gasto
-    const resumo = session.data.tipo === TransactionType.GASTO
-      ? `\n💳 ${session.data.formaPagamento || 'N/A'}${session.data.parcelas ? ` (${session.data.parcelas}x)` : ''}`
+    const resumo =
+    session.data.tipo === TransactionType.GASTO
+      ? `\n💳 Forma: ${session.data.formaPagamento}${
+          session.data.cartao ? `\n🏦 Cartão: ${session.data.cartao}` : ''
+        }${
+          session.data.parcelas ? `\n📦 Parcelas: ${session.data.parcelas}x` : ''
+        }`
       : '';
   
     // Envia mensagem de valor
@@ -342,6 +412,7 @@ export class CommandHandler {
     const transaction: Transaction = {
       tipo: session.data.tipo!,
       formaPagamento: session.data.formaPagamento,
+      cartao: session.data.cartao,
       categoria: session.data.categoria!,
       valor: session.data.valor!,
       usuario: session.data.usuario!,
@@ -390,6 +461,7 @@ export class CommandHandler {
       const transaction: Transaction = {
         tipo: TransactionType.GASTO,
         formaPagamento: session.data.formaPagamento,
+        cartao: session.data.cartao,
         categoria: session.data.categoria!,
         valor: valorFinal,
         parcelas,
@@ -472,6 +544,19 @@ export class CommandHandler {
       `4️⃣ Digite o valor\n` +
       `5️⃣ Pronto!\n\n` +
       `💡 *Dica:* Para gastos parcelados, escolha a forma de pagamento "Parcelado" e informe a quantidade de vezes.`
+    );
+  }
+
+  private formaExigeCartao(forma: string): boolean {
+    const normalizada = forma
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  
+    return (
+      normalizada === 'credito a vista' ||
+      normalizada === 'credito parcelado'
     );
   }
 }

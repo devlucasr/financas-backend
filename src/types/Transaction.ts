@@ -6,8 +6,9 @@ export enum TransactionType {
 export interface Transaction {
   id?: string;
   tipo: TransactionType;
-  formaPagamento?: string; // Como pagou: Cartão, PIX, Dinheiro, Parcelado
-  categoria: string; // O que foi: Mercado, Combustível, etc
+  formaPagamento?: string;
+  categoria: string;
+  cartao?: string;
   valor: number;
   parcelas?: number;
   parcelaAtual?: number;
@@ -31,9 +32,9 @@ export interface UserSession {
   step:
     | "awaiting_type"
     | "awaiting_forma_pagamento"
+    | "awaiting_cartao"
     | "awaiting_categoria"
     | "awaiting_parcelas"
-    | "awaiting_value"
-    | "complete";
+    | "awaiting_value";
   data: Partial<Transaction>;
 }

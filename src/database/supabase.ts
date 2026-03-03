@@ -17,6 +17,7 @@ export class DatabaseService {
       const insertData = {
         tipo: transaction.tipo,
         forma_pagamento: transaction.formaPagamento || null,
+        cartao: transaction.cartao || null,
         categoria: transaction.categoria,
         valor: transaction.valor,
         parcelas: transaction.parcelas,
@@ -119,7 +120,9 @@ export class DatabaseService {
       return (data || []).map((t: any) => ({
         id: t.id,
         tipo: t.tipo as TransactionType,
+        formaPagamento: t.forma_pagamento,
         categoria: t.categoria,
+        cartao: t.cartao,
         valor: parseFloat(t.valor),
         parcelas: t.parcelas,
         parcelaAtual: t.parcela_atual,
